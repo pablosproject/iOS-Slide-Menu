@@ -39,9 +39,12 @@ typedef enum {
 @property (nonatomic, assign) CGPoint draggingPoint;
 @property (nonatomic, assign) Menu lastRevealedMenu;
 @property (nonatomic, assign) BOOL menuNeedsLayout;
+@property (nonatomic, assign) UIDeviceOrientation lastValidDeviceInterfaceOrientation;
 @end
 
 @implementation SlideNavigationController
+
+UIView *problemView;
 
 NSString * const SlideNavigationControllerDidOpen = @"SlideNavigationControllerDidOpen";
 NSString * const SlideNavigationControllerDidClose = @"SlideNavigationControllerDidClose";
@@ -521,33 +524,41 @@ static SlideNavigationController *singletonInstance;
 - (void)moveHorizontallyToLocation:(CGFloat)location
 {
 	CGRect rect = self.view.frame;
-	UIInterfaceOrientation orientation = [UIApplication sharedApplication].statusBarOrientation;
 	Menu menu = (self.horizontalLocation >= 0 && location >= 0) ? MenuLeft : MenuRight;
-    
-    if ((location > 0 && self.horizontalLocation <= 0) || (location < 0 && self.horizontalLocation >= 0)) {
-        [self postNotificationWithName:SlideNavigationControllerDidReveal forMenu:(location > 0) ? MenuLeft : MenuRight];
-    }
-	
-    if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"8.0"))
-    {
-        rect.origin.x = location;
-        rect.origin.y = 0;
-    }
-    else
-    {
-        if (UIInterfaceOrientationIsLandscape(orientation))
-        {
-            rect.origin.x = 0;
-            rect.origin.y = (orientation == UIInterfaceOrientationLandscapeRight) ? location : location*-1;
-        }
-        else
-        {
-            rect.origin.x = (orientation == UIInterfaceOrientationPortrait) ? location : location*-1;
-            rect.origin.y = 0;
-        }
-    }
-	
-	self.view.frame = rect;
+
+	if ((location > 0 && self.horizontalLocation <= 0) || (location < 0 && self.horizontalLocation >= 0)) {
+		[self postNotificationWithName:SlideNavigationControllerDidReveal forMenu:(location > 0) ? MenuLeft : MenuRight];
+	}
+
+	if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"8.0"))
+	{
+		rect.origin.x = location;
+		rect.origin.y = 0;
+	}
+	else
+	{
+		if (UIDeviceOrientationIsLandscape(self.lastValidDeviceInterfaceOrientation))
+		{
+			rect.origin.x = 0;
+			rect.origin.y = (self.lastValidDeviceInterfaceOrientation == UIDeviceOrientationLandscapeRight) ? location*-1 : location;
+		}
+		else
+		{
+			rect.origin.x = (self.lastValidDeviceInterfaceOrientation == UIDeviceOrientationPortrait) ? location : location*-1;
+			rect.origin.y = 0;
+		}
+	}
+
+
+	//[[self.view.window viewWithTag:100] setFrame:rect];
+
+	if (problemView) {
+		[problemView setFrame:rect];
+		self.view.frame = CGRectMake(0, 0, self.view.frame.size.width, self.view.frame.size.height);
+	}
+	else{
+		self.view.frame = rect;
+	}
 	[self updateMenuAnimation:menu];
 }
 
@@ -592,15 +603,30 @@ static SlideNavigationController *singletonInstance;
 - (void)prepareMenuForReveal:(Menu)menu
 {
 	// Only prepare menu if it has changed (ex: from MenuLeft to MenuRight or vice versa)
-    if (self.lastRevealedMenu && menu == self.lastRevealedMenu)
-        return;
-    
-    UIViewController *menuViewController = (menu == MenuLeft) ? self.leftMenu : self.rightMenu;
+	//    if (self.lastRevealedMenu && menu == self.lastRevealedMenu)
+	//        return;
+
+	UIViewController *menuViewController = (menu == MenuLeft) ? self.leftMenu : self.rightMenu;
 	UIViewController *removingMenuViewController = (menu == MenuLeft) ? self.rightMenu : self.leftMenu;
 
-    self.lastRevealedMenu = menu;
+	self.lastRevealedMenu = menu;
 	
 	[removingMenuViewController.view removeFromSuperview];
+
+	for (UIView *subview in [[[UIApplication sharedApplication] delegate] window].subviews) {
+		if ([subview isKindOfClass:NSClassFromString(@"UITransitionView")]) {
+			for (UIView *subview2 in subview.subviews) {
+				if ([subview2 isKindOfClass:NSClassFromString(@"UIDropShadowView")]) {
+					for (UIView *subview3 in subview2.subviews) {
+						if ([subview3 isKindOfClass:NSClassFromString(@"UIView")] && ![subview3 isKindOfClass:NSClassFromString(@"UILayoutContainerView")]) {
+							problemView = subview3;
+						}
+					}
+				}
+			}
+		}
+	}
+
 	[self.view.window insertSubview:menuViewController.view atIndex:0];
 
 	[self updateMenuFrameAndTransformAccordingToOrientation];
@@ -611,6 +637,11 @@ static SlideNavigationController *singletonInstance;
 - (CGFloat)horizontalLocation
 {
 	CGRect rect = self.view.frame;
+
+	if (problemView) {
+		rect = problemView.frame;
+	}
+
 	UIInterfaceOrientation orientation = [UIApplication sharedApplication].statusBarOrientation;
 	
     if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"8.0"))
